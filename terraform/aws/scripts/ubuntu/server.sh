@@ -10,7 +10,7 @@ ATLAS_TOKEN=$(cat /tmp/atlas_token | tr -d '\n')
 
 # Write the flags to a temporary file
 cat >/tmp/consul_flags << EOF
-export CONSUL_FLAGS="-server -bootstrap-expect=${SERVER_COUNT} -data-dir=/mnt/consul -atlas=${ATLAS_NAME} -atlas-token=\"${ATLAS_TOKEN}\""
+export CONSUL_FLAGS="-server -bootstrap-expect=${SERVER_COUNT} -data-dir=/mnt/consul -atlas=${ATLAS_NAME} -atlas-token=${ATLAS_TOKEN}"
 EOF
 
 # Write it to the full service file
