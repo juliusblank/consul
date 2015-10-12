@@ -75,6 +75,14 @@ resource "aws_security_group" "consul" {
         cidr_blocks = ["0.0.0.0/0"]
     }
 
+    // These are for scada (atlas)
+    ingress {
+        from_port = 7223
+        to_port = 22
+        protocol = "tcp"
+        cidr_blocks = ["0.0.0.0/0"]
+    }
+
     // This is for outbound internet access
     egress {
         from_port = 0
