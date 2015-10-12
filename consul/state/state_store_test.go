@@ -3,6 +3,7 @@ package state
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -10,8 +11,10 @@ import (
 	"github.com/hashicorp/consul/consul/structs"
 )
 
+// TODO (slackpad) Make sure the GC tests are complete.
+
 func testStateStore(t *testing.T) *StateStore {
-	s, err := NewStateStore()
+	s, err := NewStateStore(nil)
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
@@ -797,6 +800,286 @@ func TestStateStore_EnsureService(t *testing.T) {
 	// Index tables were updated
 	if idx := s.maxIndex("services"); idx != 40 {
 		t.Fatalf("bad index: %d", idx)
+	}
+}
+
+func TestStateStore_Services(t *testing.T) {
+	s := testStateStore(t)
+
+	// Register several nodes and services.
+	testRegisterNode(t, s, 1, "node1")
+	ns1 := &structs.NodeService{
+		ID:      "service1",
+		Service: "redis",
+		Tags:    []string{"prod", "master"},
+		Address: "1.1.1.1",
+		Port:    1111,
+	}
+	if err := s.EnsureService(2, "node1", ns1); err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	testRegisterService(t, s, 3, "node1", "dogs")
+	testRegisterNode(t, s, 4, "node2")
+	ns2 := &structs.NodeService{
+		ID:      "service3",
+		Service: "redis",
+		Tags:    []string{"prod", "slave"},
+		Address: "1.1.1.1",
+		Port:    1111,
+	}
+	if err := s.EnsureService(5, "node2", ns2); err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	// Pull all the services.
+	idx, services, err := s.Services()
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	if idx != 5 {
+		t.Fatalf("bad index: %d", idx)
+	}
+
+	// Verify the result. We sort the lists since the order is
+	// non-deterministic (it's built using a map internally).
+	expected := structs.Services{
+		"redis": []string{"prod", "master", "slave"},
+		"dogs":  []string{},
+	}
+	sort.Strings(expected["redis"])
+	for _, tags := range services {
+		sort.Strings(tags)
+	}
+	if !reflect.DeepEqual(expected, services) {
+		t.Fatalf("bad: %#v", services)
+	}
+}
+
+// strContains checks if a list contains a string
+func strContains(l []string, s string) bool {
+	for _, v := range l {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+func TestStateStore_ServiceNodes(t *testing.T) {
+	s := testStateStore(t)
+
+	if err := s.EnsureNode(10, &structs.Node{Node: "foo", Address: "127.0.0.1"}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if err := s.EnsureNode(11, &structs.Node{Node: "bar", Address: "127.0.0.2"}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if err := s.EnsureService(12, "foo", &structs.NodeService{ID: "api", Service: "api", Tags: nil, Address: "", Port: 5000}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if err := s.EnsureService(13, "bar", &structs.NodeService{ID: "api", Service: "api", Tags: nil, Address: "", Port: 5000}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if err := s.EnsureService(14, "foo", &structs.NodeService{ID: "db", Service: "db", Tags: []string{"master"}, Address: "", Port: 8000}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if err := s.EnsureService(15, "bar", &structs.NodeService{ID: "db", Service: "db", Tags: []string{"slave"}, Address: "", Port: 8000}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if err := s.EnsureService(16, "bar", &structs.NodeService{ID: "db2", Service: "db", Tags: []string{"slave"}, Address: "", Port: 8001}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	idx, nodes, err := s.ServiceNodes("db")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	if idx != 16 {
+		t.Fatalf("bad: %v", 16)
+	}
+	if len(nodes) != 3 {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[0].Node != "bar" {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[0].Address != "127.0.0.2" {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[0].ServiceID != "db" {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if !strContains(nodes[0].ServiceTags, "slave") {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[0].ServicePort != 8000 {
+		t.Fatalf("bad: %v", nodes)
+	}
+
+	if nodes[1].Node != "bar" {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[1].Address != "127.0.0.2" {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[1].ServiceID != "db2" {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if !strContains(nodes[1].ServiceTags, "slave") {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[1].ServicePort != 8001 {
+		t.Fatalf("bad: %v", nodes)
+	}
+
+	if nodes[2].Node != "foo" {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[2].Address != "127.0.0.1" {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[2].ServiceID != "db" {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if !strContains(nodes[2].ServiceTags, "master") {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[2].ServicePort != 8000 {
+		t.Fatalf("bad: %v", nodes)
+	}
+}
+
+func TestStateStore_ServiceTagNodes(t *testing.T) {
+	s := testStateStore(t)
+
+	if err := s.EnsureNode(15, &structs.Node{Node: "foo", Address: "127.0.0.1"}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if err := s.EnsureNode(16, &structs.Node{Node: "bar", Address: "127.0.0.2"}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if err := s.EnsureService(17, "foo", &structs.NodeService{ID: "db", Service: "db", Tags: []string{"master"}, Address: "", Port: 8000}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if err := s.EnsureService(18, "foo", &structs.NodeService{ID: "db2", Service: "db", Tags: []string{"slave"}, Address: "", Port: 8001}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if err := s.EnsureService(19, "bar", &structs.NodeService{ID: "db", Service: "db", Tags: []string{"slave"}, Address: "", Port: 8000}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	idx, nodes, err := s.ServiceTagNodes("db", "master")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	if idx != 19 {
+		t.Fatalf("bad: %v", idx)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[0].Node != "foo" {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[0].Address != "127.0.0.1" {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if !strContains(nodes[0].ServiceTags, "master") {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[0].ServicePort != 8000 {
+		t.Fatalf("bad: %v", nodes)
+	}
+}
+
+func TestStateStore_ServiceTagNodes_MultipleTags(t *testing.T) {
+	s := testStateStore(t)
+
+	if err := s.EnsureNode(15, &structs.Node{Node: "foo", Address: "127.0.0.1"}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if err := s.EnsureNode(16, &structs.Node{Node: "bar", Address: "127.0.0.2"}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if err := s.EnsureService(17, "foo", &structs.NodeService{ID: "db", Service: "db", Tags: []string{"master", "v2"}, Address: "", Port: 8000}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if err := s.EnsureService(18, "foo", &structs.NodeService{ID: "db2", Service: "db", Tags: []string{"slave", "v2", "dev"}, Address: "", Port: 8001}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	if err := s.EnsureService(19, "bar", &structs.NodeService{ID: "db", Service: "db", Tags: []string{"slave", "v2"}, Address: "", Port: 8000}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	idx, nodes, err := s.ServiceTagNodes("db", "master")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	if idx != 19 {
+		t.Fatalf("bad: %v", idx)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[0].Node != "foo" {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[0].Address != "127.0.0.1" {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if !strContains(nodes[0].ServiceTags, "master") {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[0].ServicePort != 8000 {
+		t.Fatalf("bad: %v", nodes)
+	}
+
+	idx, nodes, err = s.ServiceTagNodes("db", "v2")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	if idx != 19 {
+		t.Fatalf("bad: %v", idx)
+	}
+	if len(nodes) != 3 {
+		t.Fatalf("bad: %v", nodes)
+	}
+
+	idx, nodes, err = s.ServiceTagNodes("db", "dev")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+	if idx != 19 {
+		t.Fatalf("bad: %v", idx)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[0].Node != "foo" {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[0].Address != "127.0.0.1" {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if !strContains(nodes[0].ServiceTags, "dev") {
+		t.Fatalf("bad: %v", nodes)
+	}
+	if nodes[0].ServicePort != 8001 {
+		t.Fatalf("bad: %v", nodes)
 	}
 }
 
