@@ -52,7 +52,7 @@ variable "tagName" {
     description = "Name tag for the servers"
 }
 
-variable "atlas_infrastructure" {
+variable "atlas_name" {
     default = ""
     description = "The name of your Atlas infrastructure. E.g. hashicorp/consul-demo"
 }
