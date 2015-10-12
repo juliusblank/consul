@@ -51,3 +51,13 @@ variable "tagName" {
     default = "consul"
     description = "Name tag for the servers"
 }
+
+variable "atlas_infrastructure" {
+    default = ""
+    description = "The name of your Atlas infrastructure. E.g. hashicorp/consul-demo"
+}
+
+variable "atlas_token" {
+    default = ""
+    description = "Your Atlas token."
+}

@@ -33,6 +33,13 @@ resource "aws_instance" "server" {
     }
 
     provisioner "remote-exec" {
+        inline = [
+            "echo ${var.atlas_name} > /tmp/atlas_name",
+            "echo ${var.atlas_token} > /tmp/atlas_token",
+        ]
+    }
+
+    provisioner "remote-exec" {
         scripts = [
             "${path.module}/scripts/${var.platform}/install.sh",
             "${path.module}/scripts/${var.platform}/server.sh",
